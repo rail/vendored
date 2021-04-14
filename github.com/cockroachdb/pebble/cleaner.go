@@ -14,3 +14,6 @@ type DeleteCleaner = base.DeleteCleaner
 
 // ArchiveCleaner exports the base.ArchiveCleaner type.
 type ArchiveCleaner = base.ArchiveCleaner
+
+// DelayedCleaner exports the base.DelayedCleaner type.
+type DelayedCleaner = base.DelayedCleaner

@@ -4,7 +4,12 @@
 
 package base
 
-import "github.com/cockroachdb/pebble/vfs"
+import (
+	"sync"
+	"time"
+
+	"github.com/cockroachdb/pebble/vfs"
+)
 
 // Cleaner cleans obsolete files.
 type Cleaner interface {
@@ -57,4 +62,55 @@ func (ArchiveCleaner) String() string {
 }
 
 func (ArchiveCleaner) needsFileContents() {
+}
+
+// DelayedCleaner deletes files but at a delay.
+type DelayedCleaner struct {
+	Dur time.Duration
+
+	mu     sync.Mutex
+	last   time.Time
+	delete []string
+	accum  []string
+}
+
+var _ NeedsFileContents = DelayedCleaner{}
+
+// Clean deletes the file, at a delay.
+func (d DelayedCleaner) Clean(fs vfs.FS, fileType FileType, path string) error {
+	switch fileType {
+	case FileTypeLog, FileTypeManifest, FileTypeTable:
+		d.mu.Lock()
+		defer d.mu.Unlock()
+
+		d.accum = append(d.accum, path)
+
+		// If it's been d.Dur since we deleted files, move `accum` to
+		// `delete`, and asynchronously remove all of the files that used to
+		// be in `delete`. This negates deletion pacing but that's okay for
+		// debugging.
+		if time.Now().After(d.last.Add(d.Dur)) {
+			d.last = time.Now()
+			del := d.delete
+			d.delete = d.accum
+			d.accum = make([]string, 0, len(d.delete))
+			go func() {
+				for _, f := range del {
+					_ = fs.Remove(f)
+				}
+			}()
+		}
+		return nil
+
+	default:
+		return fs.Remove(path)
+	}
+}
+
+func (DelayedCleaner) String() string {
+	return "delayed"
+}
+
+func (DelayedCleaner) needsFileContents() {
+	// turn off WAL-recycling
 }
